@@ -1,0 +1,26 @@
+services:
+  privacy-mcp:
+    build: .
+    ports:
+      - "${PORT:-8001}:8000"
+    environment:
+      - PRIVACY_API_KEY=${PRIVACY_API_KEY:?PRIVACY_API_KEY is required}
+      - MCP_API_KEY=${MCP_API_KEY:?MCP_API_KEY is required}
+      - PRIVACY_SANDBOX=${PRIVACY_SANDBOX:-false}
+      - PORT=8000
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

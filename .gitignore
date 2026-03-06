@@ -1,0 +1,10 @@
+# Local secrets
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Editor/OS
+.vscode/
+.DS_Store
