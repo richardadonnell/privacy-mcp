@@ -1,4 +1,4 @@
-# Privacy MCP Server
+# Privacy.com MCP Server
 
 A portable Docker-based server that exposes [Privacy.com](https://privacy.com) virtual card and transaction data via two protocols simultaneously:
 
