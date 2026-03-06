@@ -4,10 +4,11 @@ Privacy.com MCP server exposing both FastMCP (`/mcp`) and REST (`/api/*`) endpoi
 
 ## Features
 
-- FastMCP tools for cards, transactions, funding sources, and recent webhook events
-- REST endpoints for n8n compatibility
-- Bearer auth protection for `/mcp` and `/api/*`
-- HMAC verification for Privacy.com transaction webhooks
+- FastMCP tools for virtual cards, transactions, and funding sources
+- REST endpoints for n8n and other automation tools
+- Dual-protocol: MCP (`/mcp`) + REST (`/api/*`) simultaneously
+- Bearer auth protection for all endpoints
+- Sandbox mode support via `PRIVACY_SANDBOX=true`
 - Docker and docker-compose deployment support
 
 ## Getting Started
@@ -62,7 +63,6 @@ curl http://localhost:8001/health
    - `PRIVACY_SANDBOX` (`false` for production, `true` for sandbox)
    - `PORT` (optional, defaults to `8001`)
 4. Deploy and verify `https://<your-domain>/health` returns `{"status": "ok"}`.
-5. Configure Privacy webhook URL to `https://<your-domain>/webhook/transaction`.
 
 ## Claude Desktop MCP Entry
 
@@ -76,7 +76,7 @@ curl http://localhost:8001/health
 
 ## REST API Endpoints
 
-All endpoints require: `Authorization: Bearer {MCP_API_KEY}` except `/health` and `/webhook/transaction`.
+All endpoints require: `Authorization: Bearer {MCP_API_KEY}` except `/health`.
 
 ### `GET /health`
 
@@ -85,15 +85,6 @@ Unauthenticated health check.
 ```json
 { "status": "ok", "sandbox": false }
 ```
-
-### `POST /webhook/transaction`
-
-Unauthenticated webhook receiver for Privacy.com transaction events.
-
-- Header: `X-Privacy-HMAC`
-- Body: JSON webhook event payload from Privacy.com
-
-The server verifies the HMAC signature and stores up to the most recent 100 events in memory.
 
 ### `GET /api/cards`
 
@@ -192,20 +183,6 @@ Example:
 curl -H "Authorization: Bearer YOUR_MCP_API_KEY" "http://localhost:8001/api/funding_sources"
 ```
 
-### `GET /api/webhooks/recent`
-
-Return the most recent webhook events stored in-memory.
-
-| Parameter | Type | Default | Description |
-| --- | --- | --- | --- |
-| `limit` | integer | 20 | Number of events to return (max 100) |
-
-Example:
-
-```bash
-curl -H "Authorization: Bearer YOUR_MCP_API_KEY" "http://localhost:8001/api/webhooks/recent?limit=10"
-```
-
 ## MCP Tools
 
 These are the MCP tools exposed on `/mcp` for Claude Desktop and other MCP-compatible AI assistants.
@@ -241,13 +218,8 @@ Return transactions with optional filters.
 
 Return all linked funding sources.
 
-### `get_recent_webhook_events(limit=20)`
-
-Return the most recent buffered webhook events (max 100).
-
 ## Usage Notes
 
 - Outbound Privacy API auth uses `Authorization: api-key <PRIVACY_API_KEY>`.
 - Inbound auth to this server uses `Authorization: Bearer <MCP_API_KEY>`.
 - `PRIVACY_SANDBOX=true` switches base URL to `https://sandbox.privacy.com/v1`.
-- Webhook HMAC is computed over sorted, compact JSON using your Privacy API key as the secret.

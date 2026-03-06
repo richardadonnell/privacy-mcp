@@ -5,7 +5,6 @@ Dual-protocol server:
   - /mcp          FastMCP streamable-HTTP (for Claude Desktop / Allen)
   - /api/*        Plain REST endpoints (for n8n HTTP Request nodes)
   - /health       Unauthenticated health check
-  - /webhook/*    Unauthenticated webhook receiver (Privacy.com posts here)
 
 Auth (inbound):  Authorization: Bearer {MCP_API_KEY} on /mcp and /api/*
 Auth (outbound): Authorization: api-key {PRIVACY_API_KEY} on all Privacy.com requests
@@ -19,13 +18,9 @@ Env vars:
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import json
 import logging
 import os
-from collections import deque
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
@@ -68,11 +63,6 @@ def get_client() -> httpx.AsyncClient:
 
 def _json(data: Any) -> str:
     return json.dumps(data, default=str, indent=2)
-
-
-# --- Webhook event buffer ----------------------------------------------------
-
-_webhook_events: deque[dict] = deque(maxlen=100)
 
 
 # --- FastMCP instance --------------------------------------------------------
@@ -264,60 +254,19 @@ async def list_funding_sources() -> str:
     return _json(resp.json())
 
 
-@mcp.tool(
-    name="get_recent_webhook_events",
-    annotations={"readOnlyHint": True, "destructiveHint": False},
-)
-async def get_recent_webhook_events(limit: int = 20) -> str:
-    """
-    Return the most recent webhook events received from Privacy.com.
-    Events are stored in-memory; buffer holds up to 100 events.
-
-    Args:
-        limit: Number of recent events to return (max 100, default 20).
-    """
-    limit = min(limit, 100)
-    events = list(_webhook_events)[-limit:]
-    return _json({"count": len(events), "events": events})
-
-
 # --- Auth Middleware ----------------------------------------------------------
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        # Health check and webhook receiver are public (no Bearer required)
-        if path == "/health" or path.startswith("/webhook/"):
+        # Health check is public (no Bearer required)
+        if path == "/health":
             return await call_next(request)
         auth = request.headers.get("Authorization", "")
         if not (auth.startswith("Bearer ") and auth[7:] == MCP_API_KEY):
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
         return await call_next(request)
-
-
-# --- Webhook HMAC verification -----------------------------------------------
-
-
-def _verify_privacy_hmac(body: bytes, hmac_header: str) -> bool:
-    """
-    Verify the X-Privacy-HMAC header from a Privacy.com webhook.
-
-    Privacy.com computes: HMAC-SHA256(sorted_compact_json, api_key) then base64-encodes it.
-    The body must be sorted compact JSON (no extra whitespace).
-    """
-    try:
-        # Privacy signs sorted, compact JSON. Normalize body before computing HMAC.
-        payload_obj = json.loads(body)
-        canonical = json.dumps(payload_obj, sort_keys=True, separators=(",", ":")).encode()
-
-        secret = PRIVACY_API_KEY.encode()
-        expected = base64.b64encode(
-            hmac.new(secret, canonical, hashlib.sha256).digest()
-        ).decode()
-        return hmac.compare_digest(expected, hmac_header)
-    except Exception:
-        return False
 
 
 # --- REST Route Handlers -----------------------------------------------------
@@ -405,47 +354,6 @@ async def api_funding_sources(request: Request) -> JSONResponse:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
-async def api_webhooks_recent(request: Request) -> JSONResponse:
-    try:
-        limit = int(request.query_params.get("limit", 20))
-        limit = min(limit, 100)
-        events = list(_webhook_events)[-limit:]
-        return JSONResponse({"count": len(events), "events": events})
-    except Exception as exc:
-        logger.error("api_webhooks_recent: %s", exc)
-        return JSONResponse({"error": str(exc)}, status_code=500)
-
-
-async def webhook_transaction(request: Request) -> JSONResponse:
-    """
-    Receive transaction webhook events from Privacy.com.
-    Privacy.com sends a POST with JSON body and X-Privacy-HMAC header.
-    Returns 200 immediately; Privacy.com retries with exponential backoff on non-200.
-    """
-    try:
-        body = await request.body()
-        hmac_header = request.headers.get("X-Privacy-HMAC", "")
-
-        if not _verify_privacy_hmac(body, hmac_header):
-            logger.warning("Webhook HMAC verification failed")
-            return JSONResponse({"error": "Invalid HMAC"}, status_code=401)
-
-        event = json.loads(body)
-        _webhook_events.append(event)
-        logger.info(
-            "Webhook received: type=%s card=%s",
-            event.get("event_type", "unknown"),
-            event.get("card", {}).get("token", "unknown"),
-        )
-        return JSONResponse({"status": "ok"})
-    except json.JSONDecodeError:
-        return JSONResponse({"error": "Invalid JSON"}, status_code=400)
-    except Exception as exc:
-        logger.error("webhook_transaction: %s", exc)
-        # Return 200 anyway so Privacy.com doesn't keep retrying a server error
-        return JSONResponse({"status": "error", "detail": str(exc)})
-
-
 # --- App Assembly ------------------------------------------------------------
 
 mcp_asgi = mcp.http_app()
@@ -469,8 +377,6 @@ async def lifespan(app: Starlette):
 app = Starlette(
     routes=[
         Route("/health", endpoint=health, methods=["GET"]),
-        # Webhook receiver — public (Privacy.com posts directly; no Bearer)
-        Route("/webhook/transaction", endpoint=webhook_transaction, methods=["POST"]),
         # REST endpoints for n8n
         Route("/api/cards", endpoint=api_cards, methods=["GET"]),
         Route("/api/cards/{card_token:str}", endpoint=api_card_detail, methods=["GET"]),
@@ -478,7 +384,6 @@ app = Starlette(
         Route("/api/cards/{card_token:str}", endpoint=api_update_card, methods=["PATCH"]),
         Route("/api/transactions", endpoint=api_transactions, methods=["GET"]),
         Route("/api/funding_sources", endpoint=api_funding_sources, methods=["GET"]),
-        Route("/api/webhooks/recent", endpoint=api_webhooks_recent, methods=["GET"]),
         # FastMCP MCP protocol — handles /mcp
         Mount("/", app=mcp_asgi),
     ],
