@@ -208,7 +208,7 @@ curl -H "Authorization: Bearer YOUR_MCP_API_KEY" "http://localhost:8001/api/webh
 
 ## MCP Tools
 
-These are the MCP tools exposed on `/mcp` for Claude Desktop / Allen.
+These are the MCP tools exposed on `/mcp` for Claude Desktop and other MCP-compatible AI assistants.
 
 ### `list_cards(begin, end, page, page_size)`
 
